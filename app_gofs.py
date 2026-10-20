@@ -11,7 +11,7 @@ import pandas as pd
 import streamlit as st
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
+from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 
 from reportlab.lib.pagesizes import A4
@@ -24,6 +24,8 @@ from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
 st.set_page_config(page_title="Gojek Report Generator", page_icon="📄", layout="wide")
+
+handle_oauth_callback()
 
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 WIB = timezone(timedelta(hours=7))
@@ -46,22 +48,56 @@ def rp(n):
 # ------------------------------------------------------------------
 # GMAIL
 # ------------------------------------------------------------------
+os.environ["OAUTHLIB_RELAX_TOKEN_SCOPE"] = "1"
+
+
+def _make_flow():
+    g = st.secrets["google"]
+    cfg = {"web": {
+        "client_id": g["client_id"],
+        "client_secret": g["client_secret"],
+        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+        "token_uri": "https://oauth2.googleapis.com/token",
+        "redirect_uris": [g["redirect_uri"]],
+    }}
+    # PKCE dimatikan karena sesi Streamlit baru dibuat setelah redirect,
+    # sehingga code_verifier tidak akan tersimpan.
+    return Flow.from_client_config(
+        cfg, scopes=SCOPES, redirect_uri=g["redirect_uri"],
+        autogenerate_code_verifier=False,
+    )
+
+
+def handle_oauth_callback():
+    """Tukar ?code=... dari Google menjadi kredensial (dipanggil di awal script)."""
+    code = st.query_params.get("code")
+    if code and "creds" not in st.session_state:
+        try:
+            flow = _make_flow()
+            flow.fetch_token(code=code)
+            st.session_state["creds"] = flow.credentials
+        except Exception as e:
+            st.error(f"Login Google gagal: {e}")
+        st.query_params.clear()
+        st.rerun()
+
+
 def get_gmail_service():
-    creds = None
-    if os.path.exists('token.json'):
-        creds = Credentials.from_authorized_user_file('token.json', SCOPES)
+    creds = st.session_state.get("creds")
+    if creds and creds.expired and creds.refresh_token:
+        creds.refresh(Request())
+        st.session_state["creds"] = creds
     if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            if not os.path.exists('credentials.json'):
-                st.error("File 'credentials.json' tidak ditemukan! Harap unggah terlebih dahulu di sidebar.")
-                return None
-            flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
-            creds = flow.run_local_server(port=0)
-        with open('token.json', 'w') as token:
-            token.write(creds.to_json())
-    return build('gmail', 'v1', credentials=creds)
+        auth_url, _ = _make_flow().authorization_url(
+            access_type="offline", prompt="consent", include_granted_scopes="true"
+        )
+        st.warning("Anda belum login ke Google.")
+        st.markdown(
+            f'<a href="{auth_url}" target="_self">🔐 <b>Login dengan Google</b></a>',
+            unsafe_allow_html=True,
+        )
+        return None
+    return build("gmail", "v1", credentials=creds)
 
 
 def extract_body(payload):
@@ -457,11 +493,13 @@ st.markdown("Tarik email transaksi **Gojek** dari Gmail, pisahkan **GoFood** dan
 today = date.today()
 with st.sidebar:
     st.header("⚙️ Konfigurasi")
-    uploaded_file = st.file_uploader("Unggah file credentials.json", type=['json'])
-    if uploaded_file is not None:
-        with open("credentials.json", "wb") as f:
-            f.write(uploaded_file.getbuffer())
-        st.success("credentials.json berhasil diunggah!")
+    if "creds" in st.session_state:
+        st.success("✅ Sudah login ke Google")
+        if st.button("Logout"):
+            del st.session_state["creds"]
+            st.rerun()
+    else:
+        st.info("Belum login. Klik 'Tarik Data Email' untuk mendapatkan link login Google.")
 
     st.subheader("Data Laporan")
     nama_in = st.text_input("Nama di laporan", value="GAP")
