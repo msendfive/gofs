@@ -25,8 +25,6 @@ from openpyxl.utils import get_column_letter
 
 st.set_page_config(page_title="Gojek Report Generator", page_icon="📄", layout="wide")
 
-handle_oauth_callback()
-
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 WIB = timezone(timedelta(hours=7))
 
@@ -485,6 +483,8 @@ def render_section(label, key, icon):
                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                        key=f"xls_{key}")
 
+
+handle_oauth_callback()
 
 st.title("🚀 Gojek Email to PDF & Excel Report Generator")
 st.markdown("Tarik email transaksi **Gojek** dari Gmail, pisahkan **GoFood** dan **GoSend**, "
